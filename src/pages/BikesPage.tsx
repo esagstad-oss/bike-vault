@@ -3,6 +3,7 @@ import { v4 as uuid } from "uuid";
 import { bikes } from "../db";
 import { useAsync } from "../hooks";
 import { searchBikes, parseGeometryTable, parseSpecsText } from "../lookup";
+import type { GeoPasteResult } from "../lookup";
 import type { Bike, BikeType, BikeStatus, BikeGeometry, BikeSpec } from "../types";
 import {
   BIKE_TYPE_LABELS,
@@ -157,6 +158,9 @@ function BikeForm({
   const [pasteGeoText, setPasteGeoText] = useState("");
   const [pasteSpecText, setPasteSpecText] = useState("");
 
+  // Multi-size geometry paste state
+  const [geoPasteResult, setGeoPasteResult] = useState<GeoPasteResult | null>(null);
+
   useAsync(async () => {
     if (existingId) {
       const b = await bikes.get(existingId);
@@ -206,12 +210,34 @@ function BikeForm({
     ? `https://99spokes.com/en/bikes?q=${encodeURIComponent(`${brand} ${model} ${year}`.trim())}`
     : null;
 
+  /** Process a geometry paste result — if multi-size, show picker; if single, fill directly. */
+  const applyGeoPaste = (result: GeoPasteResult) => {
+    if (result.sizes.length === 0) return;
+    if (result.sizes.length === 1) {
+      const s = result.sizes[0];
+      setGeometry({ ...geometry, ...result.geometry[s] });
+      if (s !== "default") setSize(s);
+      setShowGeoTab(true);
+      setGeoPasteResult(null);
+    } else {
+      // Multiple sizes — show picker
+      setGeoPasteResult(result);
+    }
+  };
+
+  const handlePickSize = (s: string) => {
+    if (!geoPasteResult) return;
+    setSize(s);
+    setGeometry({ ...geometry, ...geoPasteResult.geometry[s] });
+    setShowGeoTab(true);
+    setGeoPasteResult(null);
+  };
+
   const handleClipboardGeo = async () => {
     try {
       const text = await navigator.clipboard.readText();
       if (text.trim()) {
-        const parsed = parseGeometryTable(text);
-        setGeometry({ ...geometry, ...parsed });
+        applyGeoPaste(parseGeometryTable(text));
       }
     } catch {
       alert("Clipboard access denied. Use the paste textarea instead.");
@@ -232,8 +258,7 @@ function BikeForm({
 
   const handlePasteGeometry = () => {
     if (pasteGeoText.trim()) {
-      const parsed = parseGeometryTable(pasteGeoText);
-      setGeometry({ ...geometry, ...parsed });
+      applyGeoPaste(parseGeometryTable(pasteGeoText));
       setPasteGeoText("");
     }
   };
@@ -307,12 +332,13 @@ function BikeForm({
 
       </div>
 
-      {/* ── 99spokes link after picking ── */}
+      {/* ── 99spokes link ── */}
       {specsSearchUrl && (
         <div className="specs-hint">
-          <p>To add geometry & specs: open
+          <p>Find your bike on
             <a href={specsSearchUrl} target="_blank" rel="noopener noreferrer"> 99spokes.com ↗</a>,
-            find your bike, copy the geometry table or spec list, then use <strong>Paste from Clipboard</strong> below.
+            select the geometry table (all sizes), copy it, then use <strong>Paste from Clipboard</strong> below.
+            You'll be able to pick your size.
           </p>
         </div>
       )}
@@ -366,6 +392,20 @@ function BikeForm({
           <input value={specUrl} onChange={(e) => setSpecUrl(e.target.value)} placeholder="https://99spokes.com/en/bikes/..." />
         </label>
       </div>
+
+      {/* ── Size picker (multi-size paste) ── */}
+      {geoPasteResult && geoPasteResult.sizes.length > 1 && (
+        <div className="size-picker">
+          <h3>Pick your size</h3>
+          <div className="size-chips">
+            {geoPasteResult.sizes.map((s) => (
+              <button key={s} type="button" className="size-chip" onClick={() => handlePickSize(s)}>
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Geometry ── */}
       <div className="collapsible-section">

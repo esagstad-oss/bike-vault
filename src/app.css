@@ -676,6 +676,56 @@ button:hover {
   text-decoration: underline;
 }
 
+/* ── 99spokes import ── */
+
+.import-error {
+  color: var(--danger);
+  font-size: 0.85rem;
+  padding: 8px 12px;
+  background: rgba(239, 83, 80, 0.1);
+  border: 1px solid rgba(239, 83, 80, 0.3);
+  border-radius: var(--radius);
+  margin: 8px 0;
+}
+
+.size-picker {
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 12px 0;
+}
+
+.size-picker h3 {
+  font-size: 0.95rem;
+  margin-bottom: 10px;
+  color: var(--accent);
+}
+
+.size-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.size-chip {
+  padding: 8px 18px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface-hover);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition: all 0.15s;
+}
+
+.size-chip:hover {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
 /* ── Clipboard paste ── */
 
 .clipboard-actions {

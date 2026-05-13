@@ -55,13 +55,114 @@ export async function searchBikes(query: string): Promise<LookupResult[]> {
     .filter(Boolean) as LookupResult[];
 }
 
-// ── Fallback: parse geometry from a pasted spec table ──
-// Users can paste a geometry table (e.g. from a manufacturer site) and we parse it.
+// ── Geometry label → our key mapping ──
 
-export function parseGeometryTable(text: string): BikeGeometry {
+const GEO_LABELS: [keyof BikeGeometry, RegExp][] = [
+  ["stack", /^stack/i],
+  ["reach", /^reach/i],
+  ["headTubeAngle", /^head\s*(?:tube)?\s*angle/i],
+  ["seatTubeAngle", /^seat\s*(?:tube)?\s*angle/i],
+  ["chainstay", /^chain\s*stay/i],
+  ["wheelbase", /^wheel\s*base/i],
+  ["bbDrop", /^(?:bb|bottom\s*bracket)\s*drop/i],
+  ["headTubeLength", /^head\s*tube(?:\s*(?:length))?$/i],
+  ["seatTubeLength", /^seat\s*tube(?:\s*(?:length|\(c-t\)))?$/i],
+  ["topTubeLength", /^(?:effective\s*)?top\s*tube/i],
+  ["trailMm", /^trail$/i],
+];
+
+function matchGeoKey(label: string): keyof BikeGeometry | null {
+  const clean = label.replace(/\(.*?\)/g, "").replace(/\s+/g, " ").trim();
+  for (const [key, re] of GEO_LABELS) {
+    if (re.test(clean)) return key;
+  }
+  return null;
+}
+
+/** Result of parsing a multi-size geometry paste. */
+export interface GeoPasteResult {
+  sizes: string[];
+  geometry: Record<string, BikeGeometry>;
+}
+
+/**
+ * Parse a pasted geometry table.
+ *
+ * Handles two formats:
+ * 1. **Tab-separated multi-size table** (99spokes / manufacturer sites):
+ *    First row = size headers, subsequent rows = "Label\tval1\tval2\t..."
+ * 2. **Simple key: value lines** (fallback):
+ *    "Stack: 560", "Reach: 390", etc.
+ */
+export function parseGeometryTable(text: string): GeoPasteResult {
+  const lines = text.split(/\n/).filter((l) => l.trim());
+  if (lines.length === 0) return { sizes: [], geometry: {} };
+
+  // Detect tab-separated table: if most lines have tabs
+  const tabLines = lines.filter((l) => l.includes("\t"));
+  if (tabLines.length >= 2) {
+    return parseTabSeparatedGeo(lines);
+  }
+
+  // Fallback: simple "label: value" format → single-size result
+  const geo = parseSimpleGeo(lines);
+  if (Object.keys(geo).length > 0) {
+    return { sizes: ["default"], geometry: { default: geo } };
+  }
+  return { sizes: [], geometry: {} };
+}
+
+function parseTabSeparatedGeo(lines: string[]): GeoPasteResult {
+  // Find header row: the one where most cells are non-numeric (size names)
+  // Typically the first row with tabs
+  let headerIdx = 0;
+  for (let i = 0; i < Math.min(3, lines.length); i++) {
+    const cells = lines[i].split("\t");
+    if (cells.length >= 2) {
+      // Check if this row's data cells are mostly non-numeric → likely header
+      const dataCells = cells.slice(1).filter((c) => c.trim());
+      const numericCount = dataCells.filter((c) => /^\d/.test(c.trim())).length;
+      if (numericCount < dataCells.length / 2) {
+        headerIdx = i;
+        break;
+      }
+    }
+  }
+
+  const headerCells = lines[headerIdx].split("\t");
+  const sizes: string[] = [];
+  for (let i = 1; i < headerCells.length; i++) {
+    const s = headerCells[i].trim();
+    if (s) sizes.push(s);
+  }
+
+  if (sizes.length === 0) {
+    // Can't determine sizes — fall back to simple parse
+    const geo = parseSimpleGeo(lines);
+    return Object.keys(geo).length > 0
+      ? { sizes: ["default"], geometry: { default: geo } }
+      : { sizes: [], geometry: {} };
+  }
+
+  const geometry: Record<string, BikeGeometry> = {};
+  for (const s of sizes) geometry[s] = {};
+
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const cells = lines[i].split("\t");
+    if (cells.length < 2) continue;
+    const key = matchGeoKey(cells[0]);
+    if (!key) continue;
+    for (let j = 1; j < cells.length && j - 1 < sizes.length; j++) {
+      const val = parseFloat(cells[j].replace(/[^\d.-]/g, ""));
+      if (!isNaN(val)) geometry[sizes[j - 1]][key] = val;
+    }
+  }
+
+  return { sizes, geometry };
+}
+
+function parseSimpleGeo(lines: string[]): BikeGeometry {
   const geo: BikeGeometry = {};
-  const lines = text.split(/\n/);
-
   const patterns: [keyof BikeGeometry, RegExp][] = [
     ["stack", /stack[:\s]+(\d+(?:\.\d+)?)/i],
     ["reach", /reach[:\s]+(\d+(?:\.\d+)?)/i],
@@ -75,7 +176,6 @@ export function parseGeometryTable(text: string): BikeGeometry {
     ["topTubeLength", /(?:effective\s*)?top\s*tube[:\s]+(\d+(?:\.\d+)?)/i],
     ["trailMm", /trail[:\s]+(\d+(?:\.\d+)?)/i],
   ];
-
   for (const line of lines) {
     for (const [key, regex] of patterns) {
       const match = line.match(regex);
@@ -84,7 +184,6 @@ export function parseGeometryTable(text: string): BikeGeometry {
       }
     }
   }
-
   return geo;
 }
 
@@ -116,6 +215,19 @@ export function parseSpecsText(text: string): BikeSpec {
 
   for (const line of lines) {
     const trimmed = line.trim();
+    // Handle tab-separated "Label\tValue" format
+    const tabParts = trimmed.split("\t");
+    if (tabParts.length === 2) {
+      const label = tabParts[0].trim().toLowerCase();
+      const value = tabParts[1].trim();
+      for (const [key, regex] of patterns) {
+        if (regex.test(label + ": x") || regex.test(tabParts[0].trim() + ": " + value)) {
+          if (!spec[key]) spec[key] = value;
+          break;
+        }
+      }
+    }
+    // Also try colon-separated
     for (const [key, regex] of patterns) {
       const match = trimmed.match(regex);
       if (match && !spec[key]) {
